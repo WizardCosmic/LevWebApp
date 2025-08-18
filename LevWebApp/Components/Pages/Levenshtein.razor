@@ -1,121 +1,362 @@
-﻿@rendermode InteractiveServer
+﻿@rendermode InteractiveWebAssembly
 @page "/levenshtein"
+@using System.Text
+@using System.Text.RegularExpressions
+@using System.Linq
+@using Microsoft.AspNetCore.Components
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@* Add @using YourNamespaceIfNeeded *@
+
 <PageTitle>Levenshtein Tool</PageTitle>
+
 <h3>Levenshtein</h3>
-<div>
-    <p>
-        Hello, this page is meant to simulate the Levenshtein logic found in FCRM.  To use this page, please enter both your source entry and your list entry.  Then hit calculate.
-        <br />
-        NOTE: It is important to use the correct box.  There is differing logic for each of the two fields.
-    </p>
-</div>
-<div>Check Two Letter Words<InputCheckbox @bind-Value="chkTwoWord"></InputCheckbox></div>
-<div>Single Word Scord Reduction<InputCheckbox @bind-Value="chkSingleWord"></InputCheckbox></div>
-<div><p>Reduction: <InputText @bind-Value="txtSingleWord" class="form-control"></InputText></p></div>
-<div>
-    <p>Source Entry: <InputText @bind-Value="sourceEntry" class="form-control"></InputText></p>
-    <p>List Entry: <InputText @bind-Value="listEntry" class="form-control"></InputText></p>
+
+<p>
+    Enter your <b>Source</b> and <b>List/Target</b> entries, choose options, then click <b>Calculate</b>.
+    Double-click a row to toggle Include/Exclude.
+</p>
+
+<div class="panel">
+    <div class="left">
+        <div class="field">
+            <label>Two Letter Word Scoring</label>
+            <InputCheckbox @bind-Value="chkTwoWord" />
+        </div>
+        <div class="field">
+            <label>Single Word Score Reduction</label>
+            <InputCheckbox @bind-Value="chkSingleWord" />
+        </div>
+        <div class="field">
+            <label>Reduction Amount</label>
+            <InputText @bind-Value="txtSingleWord" class="form-control" />
+        </div>
+
+        <div class="field">
+            <label>Source Entry</label>
+            <InputText @bind-Value="sourceEntry" class="form-control" />
+        </div>
+        <div class="field">
+            <label>List/Target Entry</label>
+            <InputText @bind-Value="listEntry" class="form-control" />
+        </div>
+
+        <div class="grid2">
+            <div class="field">
+                <label>Weight (multiplier)</label>
+                <InputNumber @bind-Value="TotalWeight" />
+            </div>
+            <div class="field">
+                <label>File Name</label>
+                <InputText @bind-Value="fileName" />
+            </div>
+        </div>
+
+        <div class="buttons">
+            <button type="button" @onclick="ProcessPair">Calculate</button>
+            <button type="button" @onclick="OpenInExcel" disabled="@(!HasRows)">Open to Excel</button>
+            <button type="button" @onclick="PrepareExport" disabled="@(!HasRows)">Export to CSV</button>
+            <a href="@CsvDataUrl" download="@DownloadFileName"
+               style="display:@(ShowExportLink ? "inline-block" : "none"); margin-left:.5rem">
+                Click to download
+            </a>
+        </div>
+
+        <div class="summary">
+            <div><b>Total Score Before Weight:</b> @WithoutWeightDisplay</div>
+            <div><b>Total Score With Weight:</b> @WithWeightDisplay</div>
+            <div><b>Sum of Words (S):</b> @SumOfWords</div>
+            <div><b>Sum of Distances (D):</b> @SumOfDistances</div>
+            <div><b>Total Score Calculation:</b> ((@SumOfWords - @SumOfDistances) * 100) / @SumOfWords = @TotalScoreCalcDisplay</div>
+        </div>
+    </div>
+
+    <div class="right">
+        <div class="tableWrap">
+            <table class="data">
+                <thead>
+                    <tr>
+                        <th class="sortable" @onclick="() => ToggleSort(nameof(WordPair.TargetWord))">
+                            Target Word @SortGlyph(nameof(WordPair.TargetWord))
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(nameof(WordPair.SourceWord))">
+                            Source Word @SortGlyph(nameof(WordPair.SourceWord))
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(nameof(WordPair.scored))">
+                            Scored @SortGlyph(nameof(WordPair.scored))
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(nameof(WordPair.excluded))">
+                            Excluded @SortGlyph(nameof(WordPair.excluded))
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(nameof(WordPair.levdistance))">
+                            Levenshtein Distance @SortGlyph(nameof(WordPair.levdistance))
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(nameof(WordPair.InitialScore))">
+                            Initial Score @SortGlyph(nameof(WordPair.InitialScore))
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(nameof(WordPair.sourcedistance))">
+                            Source Distance @SortGlyph(nameof(WordPair.sourcedistance))
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(nameof(WordPair.targetdistance))">
+                            Target Distance @SortGlyph(nameof(WordPair.targetdistance))
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(nameof(WordPair.totaldistance))">
+                            Total Distance @SortGlyph(nameof(WordPair.totaldistance))
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!SortedRows.Any())
+                    {
+                        <tr><td colspan="9" style="text-align:center; color:#666">Enter text and click Calculate.</td></tr>
+                    }
+                    else
+                    {
+                        @foreach (var r in SortedRows)
+                        {
+                            <tr @onclick="(() => SelectRow(r))"
+                                @ondblclick="(() => ToggleExclude(r))"
+                                class="@(ReferenceEquals(r, SelectedRow) ? "selected" : null)">
+                                <td>@r.TargetWord</td>
+                                <td>@r.SourceWord</td>
+                                <td><input type="checkbox" disabled checked="@r.scored" /></td>
+                                <td><input type="checkbox" disabled checked="@r.excluded" /></td>
+                                <td>@r.levdistance</td>
+                                <td>@r.InitialScore</td>
+                                <td>@r.sourcedistance</td>
+                                <td>@r.targetdistance</td>
+                                <td>@r.totaldistance</td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
 
-
-<br />
-<div>
-    <button type="button" @onclick="processPair">Calculate</button>
-</div>
 @code {
+    // ===== Inputs / options =====
     string sourceEntry = "Source Entry";
     string listEntry = "List Entry";
     bool chkTwoWord;
     bool chkSingleWord;
     string txtSingleWord = "0";
-    String[] excludedWords = { "" };
-    Calculator calculator = new Calculator();
-    void processPair()
+    string[] excludedWords = new[] { "" }; // keep as in WPF
+    double TotalWeight { get; set; } = 1.0;
+    string fileName { get; set; } = "LevenshteinResults";
+
+    // ===== Results / selection =====
+    List<WordPair> Rows { get; set; } = new();
+    bool HasRows => Rows.Count > 0;
+    WordPair? SelectedRow { get; set; }
+
+    int SumOfWords { get; set; }
+    int SumOfDistances { get; set; }
+    decimal BaseScorePercent { get; set; } // ((S-D)*100)/S
+
+    string WithoutWeightDisplay => HasRows ? $"{BaseScorePercent:0.##}%" : "";
+    string WithWeightDisplay => HasRows ? $"{(BaseScorePercent * (decimal)TotalWeight):0.##}%" : "";
+    string TotalScoreCalcDisplay => HasRows ? $"{BaseScorePercent:0.##}%" : "";
+
+    // ===== Export =====
+    string CsvDataUrl { get; set; } = string.Empty;
+    bool ShowExportLink { get; set; }
+    string DownloadFileName => string.IsNullOrWhiteSpace(fileName)
+      ? "LevenshteinResults.csv"
+      : (fileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) ? fileName : fileName + ".csv");
+
+    // ===== Sorting =====
+    string sortCol = nameof(WordPair.TargetWord);
+    bool sortAsc = true;
+    IEnumerable<WordPair> SortedRows => ApplySort(Rows, sortCol, sortAsc);
+
+    MarkupString SortGlyph(string col)
     {
-        string[] sourceEntrySplit = sourceEntry.Split(new char[] { ' ', '/', ',', '-', '.', '+', '?', '&', '\'', '\"', '!', '*', '_' });
-        string[] listEntrySplit = listEntry.Split(new char[] { ' ', '/', ',', '-', '.', '+', '?', '&', '\'', '\"', '!', '*', '_' });
-        WordPair[] wordPairs = new WordPair[listEntrySplit.Length * sourceEntrySplit.Length];
-        int k = 0;
-        for (int i = 0; i < sourceEntrySplit.Length; i++)
+        if (col != sortCol) return (MarkupString)@"";
+        return (MarkupString)(sortAsc ? " &#9650;" : " &#9660;"); // ▲ / ▼
+    }
+
+    void ToggleSort(string col)
+    {
+        if (sortCol == col) sortAsc = !sortAsc;
+        else { sortCol = col; sortAsc = true; }
+    }
+
+    static IEnumerable<WordPair> ApplySort(IEnumerable<WordPair> rows, string col, bool asc)
+    {
+        return col switch
         {
+            nameof(WordPair.TargetWord) => asc ? rows.OrderBy(r => r.TargetWord ?? "") : rows.OrderByDescending(r => r.TargetWord ?? ""),
+            nameof(WordPair.SourceWord) => asc ? rows.OrderBy(r => r.SourceWord ?? "") : rows.OrderByDescending(r => r.SourceWord ?? ""),
+            nameof(WordPair.scored) => asc ? rows.OrderBy(r => r.scored) : rows.OrderByDescending(r => r.scored),
+            nameof(WordPair.excluded) => asc ? rows.OrderBy(r => r.excluded) : rows.OrderByDescending(r => r.excluded),
+            nameof(WordPair.levdistance) => asc ? rows.OrderBy(r => r.levdistance) : rows.OrderByDescending(r => r.levdistance),
+            nameof(WordPair.InitialScore) => asc ? rows.OrderBy(r => r.InitialScore) : rows.OrderByDescending(r => r.InitialScore),
+            nameof(WordPair.sourcedistance) => asc ? rows.OrderBy(r => r.sourcedistance) : rows.OrderByDescending(r => r.sourcedistance),
+            nameof(WordPair.targetdistance) => asc ? rows.OrderBy(r => r.targetdistance) : rows.OrderByDescending(r => r.targetdistance),
+            nameof(WordPair.totaldistance) => asc ? rows.OrderBy(r => r.totaldistance) : rows.OrderByDescending(r => r.totaldistance),
+            _ => rows
+        };
+    }
 
-            for (int j = 0; j < listEntrySplit.Length; j++)
-            {
-                WordPair temppair = new WordPair();
-                temppair.SourceWord = sourceEntrySplit[i];
-                temppair.SourceID = i;
-                temppair.TargetID = j;
-                temppair.TargetWord = listEntrySplit[j];
-                for (int k2 = 0; k2 < excludedWords.Length; k2++)
-                {
-                    if (temppair.SourceWord.ToLower() == excludedWords[k2].Trim().ToLower() || temppair.TargetWord.ToLower() == excludedWords[k2].Trim())
-                    {
-                        temppair.excluded = true;
+    // ===== Core calculator (your existing class) =====
+    Calculator calculator = new Calculator();
 
-                    }
-                    if (chkTwoWord == false)
-                    {
-                        if (temppair.SourceWord.Length < 3 || temppair.TargetWord.Length < 3)
-                        {
-                            temppair.excluded = true;
-                        }
-
-                    }
-
-
-                }
-
-
-                wordPairs[k++] = temppair;
-
-
-            }
-
-        }
-        wordPairs = calculator.CalcLevDistance(wordPairs);
-        wordPairs = calculator.CalcDistances(wordPairs);
-        wordPairs = calculator.CalcIndividualScore(wordPairs);
-        wordPairs = calculator.FindScored(wordPairs, Math.Max(listEntrySplit.Length, sourceEntrySplit.Length));
-        var totalScore = calculator.FindTotalScore(wordPairs);
-        int reduction = 0;
-        int reductionBy = 0;
-
+    // ===== Actions =====
+    async Task ProcessPair()
+    {
         try
         {
-            reductionBy = Convert.ToInt32(txtSingleWord);
-        }
-        catch
-        {
-            reductionBy = 0;
-            txtSingleWord = "Invalid entry, reduction set to 0.";
-        }
-        if (totalScore.Item1 == 100 && chkSingleWord == true && sourceEntrySplit.Count() < 2)
-        {
-            if (sourceEntrySplit.Length == 1)
-            {
-                totalScore.Item1 = totalScore.Item1 - ((listEntrySplit.Length - 1) * Convert.ToInt32(txtSingleWord));
-                reduction = (listEntrySplit.Length - 1) * reductionBy;
-            }
-            if (listEntrySplit.Length == 1)
-            {
+            await JS.InvokeVoidAsync("console.log", "Calculate clicked");
 
+            Rows.Clear(); ShowExportLink = false; CsvDataUrl = string.Empty; SelectedRow = null;
+
+            var splitChars = new[] { ' ', '/', ',', '-', '.', '+', '?', '&', '\'', '\"', '!', '*', '_' };
+            string[] src = (sourceEntry ?? "").Split(splitChars, StringSplitOptions.RemoveEmptyEntries);
+            string[] tgt = (listEntry ?? "").Split(splitChars, StringSplitOptions.RemoveEmptyEntries);
+
+            var temp = new List<WordPair>(tgt.Length * src.Length);
+            for (int i = 0; i < src.Length; i++)
+            {
+                for (int j = 0; j < tgt.Length; j++)
                 {
-                    totalScore.Item1 = totalScore.Item1 - ((sourceEntrySplit.Length - 1) * Convert.ToInt32(txtSingleWord));
-                    reduction = (sourceEntrySplit.Length - 1) * Convert.ToInt32(txtSingleWord);
+                    var p = new WordPair
+                        {
+                            SourceWord = src[i],
+                            SourceID = i,
+                            TargetID = j,
+                            TargetWord = tgt[j],
+                            excluded = false
+                        };
+
+                    // excluded words list
+                    for (int k2 = 0; k2 < excludedWords.Length; k2++)
+                    {
+                        var ex = excludedWords[k2]?.Trim() ?? "";
+                        if (string.IsNullOrEmpty(ex)) continue;
+                        if (p.SourceWord.Equals(ex, StringComparison.OrdinalIgnoreCase) ||
+                            p.TargetWord.Equals(ex, StringComparison.OrdinalIgnoreCase))
+                        {
+                            p.excluded = true;
+                        }
+                    }
+
+                    // two-letter rule
+                    if (!chkTwoWord && (p.SourceWord.Length < 3 || p.TargetWord.Length < 3))
+                        p.excluded = true;
+
+                    temp.Add(p);
+                }
+            }
+
+            // pipeline
+            var arr = temp.ToArray();
+            arr = calculator.CalcLevDistance(arr);
+            arr = calculator.CalcDistances(arr);
+            arr = calculator.CalcIndividualScore(arr);
+            arr = calculator.FindScored(arr, Math.Max(tgt.Length, src.Length));
+
+            foreach (var pair in arr) pair.InitialScore = decimal.Round(pair.InitialScore, 3);
+
+            Rows = arr.ToList();
+
+            // S & D over scored rows
+            SumOfWords = Rows.Where(r => r.scored).Sum(r => Math.Max(r.TargetWord?.Length ?? 0, r.SourceWord?.Length ?? 0));
+            SumOfDistances = Rows.Where(r => r.scored).Sum(r => r.levdistance);
+
+            // get total from your calculator if available
+            decimal score = 0m;
+            try
+            {
+                var total = calculator.FindTotalScore(arr); // assume Item1 is decimal %
+                score = total.Item1;
+            }
+            catch
+            {
+                score = SumOfWords > 0 ? (decimal)((SumOfWords - SumOfDistances) * 100.0 / SumOfWords) : 0m;
+            }
+
+            // single-word reduction nuance
+            if (chkSingleWord && score == 100m && (src.Length == 1 || tgt.Length == 1))
+            {
+                if (!int.TryParse(txtSingleWord, out var reductionBy))
+                {
+                    reductionBy = 0;
+                    txtSingleWord = "Invalid entry, reduction set to 0.";
                 }
 
-            }
-            if (reduction > 0 || totalScore.Item1 == 100)
-            {
-                totalScore.Item1 = totalScore.Item1 - 1;
+                if (src.Length == 1) score -= (tgt.Length - 1) * reductionBy;
+                if (tgt.Length == 1) score -= (src.Length - 1) * reductionBy;
 
+                if (reductionBy > 0 || score == 100m) score -= 1m;
             }
 
-            foreach (WordPair pair in wordPairs)
-            {
-                pair.InitialScore = decimal.Round(pair.InitialScore, 3);
-            }
+            BaseScorePercent = Math.Max(0m, score);
+
+            await InvokeAsync(StateHasChanged);
         }
-        
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("console.error", ex.ToString());
+        }
+    }
+
+    void ToggleExclude(WordPair row)
+    {
+        row.excluded = !row.excluded;
+        row.scored = !row.excluded;
+
+        SumOfWords = Rows.Where(r => r.scored).Sum(r => Math.Max(r.TargetWord?.Length ?? 0, r.SourceWord?.Length ?? 0));
+        SumOfDistances = Rows.Where(r => r.scored).Sum(r => r.levdistance);
+        BaseScorePercent = SumOfWords > 0 ? (decimal)((SumOfWords - SumOfDistances) * 100.0 / SumOfWords) : 0m;
+    }
+
+    void SelectRow(WordPair row) => SelectedRow = row;
+
+    void OpenInExcel()
+    {
+        if (!HasRows) return;
+        var csv = BuildCsv(Rows);
+        var url = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(csv);
+        Nav.NavigateTo(url, forceLoad: true);
+    }
+
+    void PrepareExport()
+    {
+        if (!HasRows) return;
+        var csv = BuildCsv(Rows);
+        CsvDataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(csv);
+        ShowExportLink = true;
+    }
+
+    // ===== CSV =====
+    string BuildCsv(IEnumerable<WordPair> rows)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("Target Word,Source Word,Scored,Excluded,Levenshtein Distance,Initial Score,Source Distance,Target Distance,Total Distance");
+        foreach (var r in rows)
+        {
+            sb.AppendLine(string.Join(',', new[]
+            {
+        Csv(r.TargetWord), Csv(r.SourceWord), r.scored.ToString(), r.excluded.ToString(),
+        r.levdistance.ToString(), r.InitialScore.ToString("0.###"),
+        r.sourcedistance.ToString(), r.targetdistance.ToString(), r.totaldistance.ToString()
+      }));
+        }
+        sb.AppendLine();
+        sb.AppendLine($"Sum of Words (S),{SumOfWords}");
+        sb.AppendLine($"Sum of Distances (D),{SumOfDistances}");
+        sb.AppendLine($"Base Score %, {BaseScorePercent:0.##}%");
+        sb.AppendLine($"Weighted Score %, {(BaseScorePercent * (decimal)TotalWeight):0.##}%");
+        return sb.ToString();
+    }
+
+    static string Csv(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        if (s.Contains('"') || s.Contains(',') || s.Contains('\n'))
+            return '"' + s.Replace("\"", "\"\"") + '"';
+        return s;
     }
 }
