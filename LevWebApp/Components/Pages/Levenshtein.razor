@@ -43,8 +43,8 @@
 
         <div class="grid2">
             <div class="field">
-                <label>Weight (multiplier)</label>
-                <InputNumber @bind-Value="TotalWeight" />
+                <label>Weight % (0–999)</label>
+                <InputNumber @bind-Value="WeightPercent" TValue="int" min="0" max="999" />
             </div>
             <div class="field">
                 <label>File Name</label>
@@ -143,7 +143,8 @@
     bool chkSingleWord;
     string txtSingleWord = "0";
     string[] excludedWords = new[] { "" }; // keep as in WPF
-    double TotalWeight { get; set; } = 1.0;
+    int WeightPercent { get; set; } = 100;
+    int ClampedWeight => Math.Clamp(WeightPercent, 0, 999);
     string fileName { get; set; } = "LevenshteinResults";
 
     // ===== Results / selection =====
@@ -156,7 +157,7 @@
     decimal BaseScorePercent { get; set; } // ((S-D)*100)/S
 
     string WithoutWeightDisplay => HasRows ? $"{BaseScorePercent:0.##}%" : "";
-    string WithWeightDisplay => HasRows ? $"{(BaseScorePercent * (decimal)TotalWeight):0.##}%" : "";
+    string WithWeightDisplay => HasRows ? $"{(BaseScorePercent * ClampedWeight / 100m):0.##}%" : "";
     string TotalScoreCalcDisplay => HasRows ? $"{BaseScorePercent:0.##}%" : "";
 
     // ===== Export =====
@@ -263,7 +264,7 @@
 
             // S & D over scored rows
             SumOfWords = Rows.Where(r => r.scored).Sum(r => Math.Max(r.TargetWord?.Length ?? 0, r.SourceWord?.Length ?? 0));
-            SumOfDistances = Rows.Where(r => r.scored).Sum(r => r.levdistance);
+            SumOfDistances = Rows.Where(r => r.scored).Sum(r => r.totaldistance);
 
             // get total from your calculator if available
             decimal score = 0m;
@@ -348,7 +349,7 @@
         sb.AppendLine($"Sum of Words (S),{SumOfWords}");
         sb.AppendLine($"Sum of Distances (D),{SumOfDistances}");
         sb.AppendLine($"Base Score %, {BaseScorePercent:0.##}%");
-        sb.AppendLine($"Weighted Score %, {(BaseScorePercent * (decimal)TotalWeight):0.##}%");
+        sb.AppendLine($"Weighted Score %, {(BaseScorePercent * ClampedWeight / 100m):0.##}%");
         return sb.ToString();
     }
 
