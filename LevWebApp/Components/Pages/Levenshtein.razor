@@ -1,0 +1,121 @@
+﻿@rendermode InteractiveServer
+@page "/levenshtein"
+<PageTitle>Levenshtein Tool</PageTitle>
+<h3>Levenshtein</h3>
+<div>
+    <p>
+        Hello, this page is meant to simulate the Levenshtein logic found in FCRM.  To use this page, please enter both your source entry and your list entry.  Then hit calculate.
+        <br />
+        NOTE: It is important to use the correct box.  There is differing logic for each of the two fields.
+    </p>
+</div>
+<div>Check Two Letter Words<InputCheckbox @bind-Value="chkTwoWord"></InputCheckbox></div>
+<div>Single Word Scord Reduction<InputCheckbox @bind-Value="chkSingleWord"></InputCheckbox></div>
+<div><p>Reduction: <InputText @bind-Value="txtSingleWord" class="form-control"></InputText></p></div>
+<div>
+    <p>Source Entry: <InputText @bind-Value="sourceEntry" class="form-control"></InputText></p>
+    <p>List Entry: <InputText @bind-Value="listEntry" class="form-control"></InputText></p>
+</div>
+
+
+<br />
+<div>
+    <button type="button" @onclick="processPair">Calculate</button>
+</div>
+@code {
+    string sourceEntry = "Source Entry";
+    string listEntry = "List Entry";
+    bool chkTwoWord;
+    bool chkSingleWord;
+    string txtSingleWord = "0";
+    String[] excludedWords = { "" };
+    Calculator calculator = new Calculator();
+    void processPair()
+    {
+        string[] sourceEntrySplit = sourceEntry.Split(new char[] { ' ', '/', ',', '-', '.', '+', '?', '&', '\'', '\"', '!', '*', '_' });
+        string[] listEntrySplit = listEntry.Split(new char[] { ' ', '/', ',', '-', '.', '+', '?', '&', '\'', '\"', '!', '*', '_' });
+        WordPair[] wordPairs = new WordPair[listEntrySplit.Length * sourceEntrySplit.Length];
+        int k = 0;
+        for (int i = 0; i < sourceEntrySplit.Length; i++)
+        {
+
+            for (int j = 0; j < listEntrySplit.Length; j++)
+            {
+                WordPair temppair = new WordPair();
+                temppair.SourceWord = sourceEntrySplit[i];
+                temppair.SourceID = i;
+                temppair.TargetID = j;
+                temppair.TargetWord = listEntrySplit[j];
+                for (int k2 = 0; k2 < excludedWords.Length; k2++)
+                {
+                    if (temppair.SourceWord.ToLower() == excludedWords[k2].Trim().ToLower() || temppair.TargetWord.ToLower() == excludedWords[k2].Trim())
+                    {
+                        temppair.excluded = true;
+
+                    }
+                    if (chkTwoWord == false)
+                    {
+                        if (temppair.SourceWord.Length < 3 || temppair.TargetWord.Length < 3)
+                        {
+                            temppair.excluded = true;
+                        }
+
+                    }
+
+
+                }
+
+
+                wordPairs[k++] = temppair;
+
+
+            }
+
+        }
+        wordPairs = calculator.CalcLevDistance(wordPairs);
+        wordPairs = calculator.CalcDistances(wordPairs);
+        wordPairs = calculator.CalcIndividualScore(wordPairs);
+        wordPairs = calculator.FindScored(wordPairs, Math.Max(listEntrySplit.Length, sourceEntrySplit.Length));
+        var totalScore = calculator.FindTotalScore(wordPairs);
+        int reduction = 0;
+        int reductionBy = 0;
+
+        try
+        {
+            reductionBy = Convert.ToInt32(txtSingleWord);
+        }
+        catch
+        {
+            reductionBy = 0;
+            txtSingleWord = "Invalid entry, reduction set to 0.";
+        }
+        if (totalScore.Item1 == 100 && chkSingleWord == true && sourceEntrySplit.Count() < 2)
+        {
+            if (sourceEntrySplit.Length == 1)
+            {
+                totalScore.Item1 = totalScore.Item1 - ((listEntrySplit.Length - 1) * Convert.ToInt32(txtSingleWord));
+                reduction = (listEntrySplit.Length - 1) * reductionBy;
+            }
+            if (listEntrySplit.Length == 1)
+            {
+
+                {
+                    totalScore.Item1 = totalScore.Item1 - ((sourceEntrySplit.Length - 1) * Convert.ToInt32(txtSingleWord));
+                    reduction = (sourceEntrySplit.Length - 1) * Convert.ToInt32(txtSingleWord);
+                }
+
+            }
+            if (reduction > 0 || totalScore.Item1 == 100)
+            {
+                totalScore.Item1 = totalScore.Item1 - 1;
+
+            }
+
+            foreach (WordPair pair in wordPairs)
+            {
+                pair.InitialScore = decimal.Round(pair.InitialScore, 3);
+            }
+        }
+        
+    }
+}
