@@ -263,7 +263,7 @@
             Rows = arr.ToList();
 
             // S & D over scored rows
-            SumOfWords = Rows.Where(r => r.scored).Sum(r => Math.Max(r.TargetWord?.Length ?? 0, r.SourceWord?.Length ?? 0));
+            SumOfWords = Rows.Where(r => r.scored).Sum(r => r.SourceWord.Length+r.TargetWord.Length);
             SumOfDistances = Rows.Where(r => r.scored).Sum(r => r.totaldistance);
 
             // get total from your calculator if available
@@ -308,7 +308,7 @@
         row.excluded = !row.excluded;
         row.scored = !row.excluded;
 
-        SumOfWords = Rows.Where(r => r.scored).Sum(r => Math.Max(r.TargetWord?.Length ?? 0, r.SourceWord?.Length ?? 0));
+        SumOfWords = Rows.Where(r => r.scored).Sum(r => r.SourceWord.Length + r.TargetWord.Length);
         SumOfDistances = Rows.Where(r => r.scored).Sum(r => r.levdistance);
         BaseScorePercent = SumOfWords > 0 ? (decimal)((SumOfWords - SumOfDistances) * 100.0 / SumOfWords) : 0m;
     }
