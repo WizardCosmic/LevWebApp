@@ -6,6 +6,7 @@
 @using Microsoft.AspNetCore.Components
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage.ProtectedLocalStorage PLS
 @* Add @using YourNamespaceIfNeeded *@
 
 <PageTitle>Levenshtein Tool</PageTitle>
@@ -16,7 +17,7 @@
     Enter your <b>Source</b> and <b>List/Target</b> entries, choose options, then click <b>Calculate</b>.
     Double-click a row to toggle Include/Exclude.
 </p>
-
+<div class="page-content">
 <div class="panel">
     <div class="left">
         <div class="field">
@@ -132,6 +133,17 @@
                 </tbody>
             </table>
         </div>
+    </div>
+</div>
+</div>
+<div class="save-bar">
+    <div class="save-bar__inner">
+        <button type="button" class="save-btn save-btn--primary" @onclick="SaveSettingsAsync">
+            Save Settings
+        </button>
+        <button type="button" class="save-btn" @onclick="ResetSettingsAsync">
+            Reset Settings
+        </button>
     </div>
 </div>
 
@@ -360,4 +372,64 @@
             return '"' + s.Replace("\"", "\"\"") + '"';
         return s;
     }
+    // Versioned key so you can invalidate old formats later
+    const string SettingsKey = "lev.settings.v1";
+    public class LevSettings
+    {
+        public bool TwoLetterWordScoring { get; set; }
+        public bool SingleWordReductionEnabled { get; set; }
+        public int SingleWordReductionAmount { get; set; }
+        public int WeightPercent { get; set; } = 100;  // your “weight out of 100”
+    }
+    bool _interactiveReady;   // becomes true after the first interactive render
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadSettingsAsync();   // uses JS/ProtectedLocalStorage
+            _interactiveReady = true;
+            StateHasChanged();           // repaint with loaded settings
+        }
+    }
+
+    async Task LoadSettingsAsync()
+    {
+        try
+        {
+            var res = await PLS.GetAsync<LevSettings>(SettingsKey);
+            if (res.Success && res.Value is not null) Apply(res.Value);
+        }
+        catch (InvalidOperationException)
+        {
+            // Happens only if called too early; we already defer to OnAfterRenderAsync
+        }
+    }
+
+    async Task SaveSettingsAsync()
+    {
+        if (!_interactiveReady) return; // avoid during prerender
+        await PLS.SetAsync(SettingsKey, Collect());
+    }
+    LevSettings Collect() => new()
+        {
+            TwoLetterWordScoring = chkTwoWord,
+            SingleWordReductionEnabled = chkSingleWord,
+            SingleWordReductionAmount = int.TryParse(txtSingleWord, out var v) ? v : 0,
+            WeightPercent = WeightPercent  // your int 0..100
+        };
+
+    void Apply(LevSettings s)
+    {
+        chkTwoWord = s.TwoLetterWordScoring;
+        chkSingleWord = s.SingleWordReductionEnabled;
+        txtSingleWord = s.SingleWordReductionAmount.ToString();
+        WeightPercent = Math.Clamp(s.WeightPercent, 0, 100);
+    }
+    async Task ResetSettingsAsync()
+    {
+        await PLS.DeleteAsync(SettingsKey);
+        Apply(new LevSettings()); // defaults
+    }
+
 }

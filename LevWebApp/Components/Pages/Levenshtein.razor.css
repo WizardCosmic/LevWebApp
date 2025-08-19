@@ -60,3 +60,62 @@ tr.selected {
     .sortable:hover {
         text-decoration: underline;
     }
+/* Ensure page content never hides under the sticky bar */
+.page-content {
+    padding-bottom: 64px;
+}
+
+/* Sticky bottom bar */
+.save-bar {
+    position: sticky; /* sticks to viewport bottom while scrolling the page */
+    bottom: 0;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: saturate(150%) blur(4px);
+    border-top: 1px solid #e6e6e6;
+    padding: .5rem 1rem;
+    z-index: 100; /* above tables etc. */
+}
+
+/* Optional max-width and right alignment */
+.save-bar__inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: flex-end;
+    gap: .5rem;
+}
+
+/* Special button class */
+.save-btn {
+    border: 1px solid #d0d0d0;
+    background: #fff;
+    padding: .5rem .9rem;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+    .save-btn:hover {
+        background: #f6f9ff;
+    }
+
+    .save-btn:disabled {
+        opacity: .6;
+        cursor: not-allowed;
+    }
+
+.save-btn--primary {
+    border-color: #2f6fed;
+    background: #2f6fed;
+    color: #fff;
+}
+
+    .save-btn--primary:hover {
+        filter: brightness(1.06);
+    }
+
+/* If your right panel/table has its own scroll, give it bottom padding too */
+.right {
+    padding-bottom: 64px;
+}
