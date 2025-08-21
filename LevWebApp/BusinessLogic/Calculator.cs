@@ -13,49 +13,61 @@ namespace LevWebApp
 
         public WordPair[] CalcLevDistance(WordPair[] wordPairs)
         {
-            foreach (WordPair pair in wordPairs)
+            foreach (var pair in wordPairs)
             {
-                pair.levdistance = LevenshteinRecursive(pair.SourceWord.ToLower(), pair.TargetWord.ToLower(), pair.SourceWord.Length, pair.TargetWord.Length);
+                // normalize once so comparisons are case-insensitive like before
+                var s = pair.SourceWord?.ToLowerInvariant() ?? string.Empty;
+                var t = pair.TargetWord?.ToLowerInvariant() ?? string.Empty;
 
+                pair.levdistance = LevenshteinMemo(s, t);
             }
-
             return wordPairs;
 
 
         }
 
-        static int LevenshteinRecursive(string str1, string str2, int m, int n)
+        private static int LevenshteinMemo(string a, string b)
         {
-            // If str1 is empty, the distance is the length of str2
-            if (m == 0)
+            if (a is null) a = string.Empty;
+            if (b is null) b = string.Empty;
+
+            int m = a.Length, n = b.Length;
+
+            // Optional very quick outs
+            if (m == 0) return n;
+            if (n == 0) return m;
+            if (ReferenceEquals(a, b) || a == b) return 0;
+
+            // -1 means "not computed"
+            var memo = new int[m + 1, n + 1];
+            for (int i = 0; i <= m; i++)
+                for (int j = 0; j <= n; j++)
+                    memo[i, j] = -1;
+
+            return LevenshteinMemoRec(a, b, m, n, memo);
+        }
+
+        private static int LevenshteinMemoRec(string a, string b, int i, int j, int[,] memo)
+        {
+            // already computed?
+            int cached = memo[i, j];
+            if (cached >= 0) return cached;
+
+            int res;
+            if (i == 0) res = j;
+            else if (j == 0) res = i;
+            else if (a[i - 1] == b[j - 1])
+                res = LevenshteinMemoRec(a, b, i - 1, j - 1, memo);
+            else
             {
-                return n;
+                int insert = LevenshteinMemoRec(a, b, i, j - 1, memo);
+                int remove = LevenshteinMemoRec(a, b, i - 1, j, memo);
+                int replace = LevenshteinMemoRec(a, b, i - 1, j - 1, memo);
+                res = 1 + Math.Min(Math.Min(insert, remove), replace);
             }
 
-            // If str2 is empty, the distance is the length of str1
-            if (n == 0)
-            {
-                return m;
-            }
-
-            // If the last characters of the strings are the same
-            if (str1[m - 1] == str2[n - 1])
-            {
-                return LevenshteinRecursive(str1, str2, m - 1, n - 1);
-            }
-
-            // Calculate the minimum of three operations:
-            // Insert, Remove, and Replace
-            return 1 + Math.Min(
-                Math.Min(
-                    // Insert
-                    LevenshteinRecursive(str1, str2, m, n - 1),
-                    // Remove
-                    LevenshteinRecursive(str1, str2, m - 1, n)
-                ),
-                // Replace
-                LevenshteinRecursive(str1, str2, m - 1, n - 1)
-            );
+            memo[i, j] = res;
+            return res;
         }
 
         public WordPair[] CalcDistances(WordPair[] wordPairs)
