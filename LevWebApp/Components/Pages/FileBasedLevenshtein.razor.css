@@ -120,3 +120,29 @@ table.data {
     color: #666;
     font-size: .85rem;
 }
+.busybar {
+    margin: .5rem 0;
+    padding: .5rem .75rem;
+    border: 1px solid #cfe2ff;
+    background: #e7f1ff;
+}
+
+.alert-warn {
+    margin: .5rem 0;
+    padding: .5rem .75rem;
+    border: 1px solid #f5c2c7;
+    background: #f8d7da;
+    color: #842029;
+}
+
+.btn-mini {
+    padding: .25rem .5rem;
+    border: 1px solid #d0d0d0;
+    background: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+    .btn-mini:hover {
+        background: #f6f9ff;
+    }

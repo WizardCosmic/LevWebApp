@@ -5,6 +5,7 @@
 @using Microsoft.AspNetCore.Components
 @using LevWebApp                 @* Calculator + WordPair *@
 @using LevWebApp.Models          @* NamePair *@
+@using System.Diagnostics
 @inject LevWebApp.Services.PairTransitStore Transit
 @inject NavigationManager Nav
 
@@ -46,7 +47,7 @@
         </div>
 
         <div class="buttons">
-            <button type="button" @onclick="CompareAllNamePairs"
+            <button type="button" @onclick="CompareAllNamePairsAsync"
                     disabled="@(SourceNames.Count==0 || TargetNames.Count==0)">
                 Compare (All Pairs)
             </button>
@@ -58,6 +59,33 @@
             </a>
         </div>
     </div>
+    <!-- Timeout (seconds) -->
+    <div class="field">
+        <label>Timeout (seconds)</label>
+        <InputNumber @bind-Value="TimeoutSeconds" min="1" step="1" />
+        <small>Stop early if processing exceeds this time.</small>
+    </div>
+
+    @if (IsBusy)
+    {
+        <div class="busybar">
+            Processing @ProcessedPairs / @TotalPairs …
+            <button class="btn-mini" @onclick="CancelProcessing">Cancel</button>
+        </div>
+    }
+
+    @if (TimedOut)
+    {
+        <div class="alert-warn">
+            Timed out after @TimeoutSeconds s. Showing partial results.
+        </div>
+    }
+    @if (Cancelled)
+    {
+        <div class="alert-warn">
+            Cancelled. Showing partial results.
+        </div>
+    }
 
     <div class="right">
         <div class="tableWrap">
@@ -133,6 +161,14 @@
 </div>
 
 @code {
+    private int TimeoutSeconds { get; set; } = 30;   // default; user can change in UI
+    private bool IsBusy { get; set; }
+    private bool TimedOut { get; set; }
+    private bool Cancelled { get; set; }
+    private int TotalPairs { get; set; }
+    private int ProcessedPairs { get; set; }
+    private volatile bool CancelRequested;
+    private const int YieldEvery = 50;
     private decimal MinimumScore { get; set; } = 0m;
 
     // NEW: helpers
@@ -166,6 +202,7 @@
     private string sortCol = ScoreCol;
     private bool sortAsc = false;
     private IEnumerable<NamePair> SortedRows => ApplySort(FilterRows(Rows), sortCol, sortAsc);
+    private void CancelProcessing() => CancelRequested = true;
 
     private void ToggleSort(string col)
     {
@@ -277,34 +314,47 @@
     }
 
     // ---- main comparison (NamePairs → WordPairs → Calculator) ----
-    private void CompareAllNamePairs()
+    private async Task CompareAllNamePairsAsync()
     {
+        // reset state
+        IsBusy = true; TimedOut = false; Cancelled = false; CancelRequested = false;
         Rows.Clear(); BestPerTarget.Clear(); _idByPair.Clear();
+        TotalPairs = TargetNames.Count * SourceNames.Count;
+        ProcessedPairs = 0;
 
-        foreach (var targetName in TargetNames)
+        var sw = Stopwatch.StartNew();
+        await InvokeAsync(StateHasChanged); // let the busy bar render
+
+        // main loops
+        for (int ti = 0; ti < TargetNames.Count; ti++)
         {
+            var targetName = TargetNames[ti];
             var targetWords = SplitWords(targetName);
-            for (int s = 0; s < SourceNames.Count; s++)
+
+            for (int si = 0; si < SourceNames.Count; si++)
             {
-                var sourceName = SourceNames[s];
+                // timeout / cancel check before heavy work
+                if (CancelRequested) { Cancelled = true; goto FINISH; }
+                if (sw.Elapsed.TotalSeconds > TimeoutSeconds) { TimedOut = true; goto FINISH; }
+
+                var sourceName = SourceNames[si];
                 var sourceWords = SplitWords(sourceName);
 
                 // Build cross-product of words into WordPair[]
                 var list = new List<WordPair>(targetWords.Length * sourceWords.Length);
-                for (int ti = 0; ti < targetWords.Length; ti++)
+                for (int i = 0; i < targetWords.Length; i++)
                 {
-                    for (int si = 0; si < sourceWords.Length; si++)
+                    for (int j = 0; j < sourceWords.Length; j++)
                     {
                         var wp = new WordPair
                             {
-                                TargetWord = targetWords[ti],
-                                SourceWord = sourceWords[si],
-                                TargetID = ti,
-                                SourceID = si,
+                                TargetWord = targetWords[i],
+                                SourceWord = sourceWords[j],
+                                TargetID = i,
+                                SourceID = j,
                                 excluded = false,
                                 scored = false
                             };
-
                         if (!IncludeTwoLetter && ((wp.TargetWord?.Length ?? 0) <= 2 || (wp.SourceWord?.Length ?? 0) <= 2))
                             wp.excluded = true;
 
@@ -312,43 +362,51 @@
                     }
                 }
 
-                // Run your pipeline
+                // Run your Calculator pipeline
                 var arr = list.ToArray();
                 arr = calculator.CalcLevDistance(arr);
                 arr = calculator.CalcDistances(arr);
                 arr = calculator.CalcIndividualScore(arr);
                 arr = calculator.FindScored(arr, Math.Max(targetWords.Length, sourceWords.Length));
 
-                // Final score + S/D for this NamePair
                 var (finalPercent, S, D) = calculator.FindTotalScore(arr);
 
                 var np = new NamePair
                     {
                         TargetName = targetName,
                         SourceName = sourceName,
-                        FinalScore = finalPercent,   // 0..100 from your Calculator
+                        FinalScore = finalPercent,
                         SumOfWords = S,
                         SumOfDistances = D,
-                        WordPairs = arr.ToList()    // keep all word-pairs for details
+                        WordPairs = arr.ToList()
                     };
-                var id = Transit.Put(np);
+
                 GetOrPutId(np);
-
                 Rows.Add(np);
+
+                // progress & UI yield
+                ProcessedPairs++;
+                if (ProcessedPairs % YieldEvery == 0)
+                {
+                    await InvokeAsync(StateHasChanged);
+                    await Task.Delay(1); // brief yield so UI can breathe
+                }
             }
-
         }
 
-        // Optional “best per target” (highest FinalScore)
-        if (ShowBestPerTarget)
+    FINISH:
+        // build best-per-target from whatever we have so far
+        if (ShowBestPerTarget && Rows.Count > 0)
         {
-            BestPerTarget = Rows
-              .GroupBy(r => r.TargetName, StringComparer.OrdinalIgnoreCase)
-              .Select(g => g.OrderByDescending(x => x.FinalScore).First())
-              .ToList();
+            var filtered = FilterRows(Rows); // if you have the min-score filter helper
+            BestPerTarget = filtered
+                .GroupBy(r => r.TargetName, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(x => x.FinalScore).First())
+                .ToList();
         }
 
-        CsvDataUrl = string.Empty; ShowExportLink = false;
+        IsBusy = false;
+        await InvokeAsync(StateHasChanged);
     }
 
     private static string[] SplitWords(string? name)
@@ -463,4 +521,6 @@
         _idByPair[p] = id;
         return id;
     }
+
+
 }
