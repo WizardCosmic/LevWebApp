@@ -1,0 +1,122 @@
+﻿
+.panel {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    gap: 1rem;
+}
+
+.field {
+    margin: .5rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: .35rem;
+}
+
+.grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: .75rem;
+    align-items: center;
+}
+
+.checkbox {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}
+
+.buttons {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin-top: .5rem;
+}
+
+.summary {
+    margin-top: 1rem;
+    display: grid;
+    gap: .3rem;
+}
+
+.tableWrap {
+    overflow: auto;
+}
+
+table.data {
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 720px;
+    width: 100%;
+}
+
+    table.data th, table.data td {
+        border: 1px solid #ddd;
+        padding: .35rem .5rem;
+    }
+
+.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.btn-mini {
+    padding: .25rem .5rem;
+    border: 1px solid #d0d0d0;
+    background: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+    .btn-mini:hover {
+        background: #f6f9ff;
+    }
+
+/* Modal */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.25);
+}
+
+.modal {
+    position: fixed;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 520px;
+    max-width: 100%;
+    background: #fff;
+    box-shadow: -10px 0 30px rgba(0,0,0,.15);
+    display: flex;
+    flex-direction: column;
+}
+
+.modal__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: .75rem 1rem;
+    border-bottom: 1px solid #eee;
+}
+
+.modal__body {
+    padding: 1rem;
+    overflow: auto;
+}
+
+.kpi {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: .75rem;
+    flex-wrap: wrap;
+}
+
+.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+}
+
+.muted {
+    color: #666;
+    font-size: .85rem;
+}

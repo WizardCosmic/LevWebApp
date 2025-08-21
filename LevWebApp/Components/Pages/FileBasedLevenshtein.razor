@@ -1,0 +1,466 @@
+﻿@rendermode InteractiveServer
+@page "/list-compare"
+@using System.Text
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components
+@using LevWebApp                 @* Calculator + WordPair *@
+@using LevWebApp.Models          @* NamePair *@
+@inject LevWebApp.Services.PairTransitStore Transit
+@inject NavigationManager Nav
+
+<h3>Compare Two Name Lists (All Pairs)</h3>
+
+<p>
+    Upload a <b>Source</b> list and a <b>Target</b> list (.txt or .csv; first column used for CSV). For every
+    name pair (N×M), we create score it and sort by highest matches.  You can click the View button to see the total calculations.
+</p>
+
+<div class="panel">
+    <div class="left">
+        <div class="field">
+            <label>Source list (.txt/.csv)</label>
+            <InputFile OnChange="LoadSourceFile" accept=".txt,.csv" />
+            <small>@SourceNames.Count name(s) loaded</small>
+        </div>
+
+        <div class="field">
+            <label>Target list (.txt/.csv)</label>
+            <InputFile OnChange="LoadTargetFile" accept=".txt,.csv" />
+            <small>@TargetNames.Count name(s) loaded</small>
+        </div>
+
+        <div class="grid2">
+            <label class="checkbox">
+                <input type="checkbox" @bind="IncludeTwoLetter" />
+                Include 1–2 letter words
+            </label>
+            <label class="checkbox">
+                <input type="checkbox" @bind="ShowBestPerTarget" />
+                Also show “best per target”
+            </label>
+        </div>
+        <div class="field">
+            <label>Minimum Score (%)</label>
+            <input type="number" min="0" max="100" step="0.001" @bind="MinimumScore" />
+            <small>Only show pairs with Final Score ≥ @MinimumScore.ToString("0.###")%</small>
+        </div>
+
+        <div class="buttons">
+            <button type="button" @onclick="CompareAllNamePairs"
+                    disabled="@(SourceNames.Count==0 || TargetNames.Count==0)">
+                Compare (All Pairs)
+            </button>
+
+            <button type="button" @onclick="OpenInExcel" disabled="@(!HasRows)">Open in Excel</button>
+            <button type="button" @onclick="PrepareExport" disabled="@(!HasRows)">Export CSV</button>
+            <a hidden="@(!ShowExportLink)" class="btn-mini" href="@CsvDataUrl" download="@DownloadFileName">
+                Click to download
+            </a>
+        </div>
+    </div>
+
+    <div class="right">
+        <div class="tableWrap">
+            <table class="data">
+                <thead>
+                    <tr>
+                        <th class="sortable" @onclick='() => ToggleSort(nameof(NamePair.TargetName))'>
+                            Target @SortGlyph(nameof(NamePair.TargetName))
+                        </th>
+                        <th class="sortable" @onclick='() => ToggleSort(nameof(NamePair.SourceName))'>
+                            Source @SortGlyph(nameof(NamePair.SourceName))
+                        </th>
+                        <th class="sortable" @onclick='() => ToggleSort(ScoreCol)'>
+                            Final Score % @SortGlyph(ScoreCol)
+                        </th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!HasRowsFiltered)
+                    {
+                        <tr>
+                            <td colspan="4" style="text-align:center; color:#666">
+                                @(Rows.Count == 0
+                                    ? "Upload files and click Compare."
+                                    : $"No results ≥ {MinimumScore:0.###}%. Lower the threshold or run Compare.")
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var r in SortedRows)
+                        {
+                            <tr>
+                                <td>@r.TargetName</td>
+                                <td>@r.SourceName</td>
+                                <td>@r.FinalScore.ToString("0.###")</td>
+                                
+                                <td>
+                                    <a href="@($"/pair-detail/{GetOrPutId(r)}")" target="_blank" rel="noopener" class="btn-mini">View</a>
+                                </td>
+                                
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (ShowBestPerTarget && BestPerTarget.Count > 0)
+        {
+            <h4 style="margin-top:1rem">Best match per Target</h4>
+            <div class="tableWrap">
+                <table class="data">
+                    <thead>
+                        <tr><th>Target</th><th>Best Source</th><th>Final Score %</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in BestPerTarget)
+                        {
+                            <tr>
+                                <td>@r.TargetName</td>
+                                <td>@r.SourceName</td>
+                                <td>@r.FinalScore.ToString("0.###")</td>
+                                <a href="@($"/pair-detail/{GetOrPutId(r)}")" target="_blank" rel="noopener" class="btn-mini">View</a>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private decimal MinimumScore { get; set; } = 0m;
+
+    // NEW: helpers
+    private IEnumerable<NamePair> FilterRows(IEnumerable<NamePair> src)
+      => src.Where(r => r.FinalScore >= MinimumScore);
+
+    private bool HasRowsFiltered => FilterRows(Rows).Any();
+
+    // Update SortedRows to filter first, then sort
+
+    private readonly Dictionary<NamePair, string> _idByPair = new();
+    private string GetId(NamePair p) => _idByPair[p];
+    // ---- constants / sorting keys ----
+    private const string ScoreCol = "ScorePercent";
+
+    // ---- calculator (your class) ----
+    private readonly Calculator calculator = new();
+
+    // ---- inputs ----
+    private List<string> SourceNames { get; set; } = new();
+    private List<string> TargetNames { get; set; } = new();
+    private bool IncludeTwoLetter { get; set; } = false;
+    private bool ShowBestPerTarget { get; set; } = false;
+
+    // ---- results: NamePairs ----
+    private List<NamePair> Rows { get; set; } = new();
+    private List<NamePair> BestPerTarget { get; set; } = new();
+    private bool HasRows => Rows.Count > 0;
+
+    // ---- sorting ----
+    private string sortCol = ScoreCol;
+    private bool sortAsc = false;
+    private IEnumerable<NamePair> SortedRows => ApplySort(FilterRows(Rows), sortCol, sortAsc);
+
+    private void ToggleSort(string col)
+    {
+        if (sortCol == col) sortAsc = !sortAsc;
+        else { sortCol = col; sortAsc = true; }
+    }
+
+    private MarkupString SortGlyph(string col) =>
+      (MarkupString)((col == sortCol) ? (sortAsc ? " &#9650;" : " &#9660;") : "");
+
+    private static IEnumerable<NamePair> ApplySort(IEnumerable<NamePair> rows, string col, bool asc) => col switch
+    {
+        nameof(NamePair.TargetName) => asc ? rows.OrderBy(r => r.TargetName) : rows.OrderByDescending(r => r.TargetName),
+        nameof(NamePair.SourceName) => asc ? rows.OrderBy(r => r.SourceName) : rows.OrderByDescending(r => r.SourceName),
+        ScoreCol => asc ? rows.OrderBy(r => r.FinalScore) : rows.OrderByDescending(r => r.FinalScore),
+        _ => rows
+    };
+
+    
+
+    // ---- upload handlers ----
+    private const long MaxUploadBytes = 2 * 1024 * 1024;
+
+    async Task LoadSourceFile(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        bool isSdn = string.Equals(file.Name.ToLower(), "sdn.csv", StringComparison.OrdinalIgnoreCase);
+        // SDN: parse 2nd column (index 1) and try to skip header
+        SourceNames = await ReadNamesAsync(file, preferredCsvColumnIndex: isSdn ? 1 : 0, trySkipHeader: isSdn);
+    }
+    async Task LoadTargetFile(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        bool isSdn = string.Equals(file.Name.ToLower(), "sdn.csv", StringComparison.OrdinalIgnoreCase);
+        TargetNames = await ReadNamesAsync(file, preferredCsvColumnIndex: isSdn ? 1 : 0, trySkipHeader: isSdn);
+    }
+
+    private static async Task<List<string>> ReadNamesAsync(
+        IBrowserFile file,
+        int preferredCsvColumnIndex = 0,
+        bool trySkipHeader = false)
+    {
+        if (trySkipHeader == true)
+        {
+            using var stream = file.OpenReadStream(6000000);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            var text = await reader.ReadToEndAsync();
+            return ParseNames(text, preferredCsvColumnIndex, trySkipHeader);
+        } else
+        {
+            using var stream = file.OpenReadStream(MaxUploadBytes);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            var text = await reader.ReadToEndAsync();
+            return ParseNames(text, preferredCsvColumnIndex, trySkipHeader);
+        }
+
+    }
+
+    private static List<string> ParseNames(string raw, int columnIndex = 0, bool trySkipHeader = false)
+    {
+        var lines = raw.Replace("\r\n", "\n").Split('\n');
+        var names = new List<string>();
+        bool headerChecked = !trySkipHeader; // if we don't try to skip, treat as already checked
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine?.Trim();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            // Optional header sniff: if SDN and first row's col0 isn't digits or equals "id", skip it
+            if (!headerChecked)
+            {
+                var c0 = GetCsvColumn(line, 0);
+                if (!IsAllDigits(c0) || c0.Equals("id", StringComparison.OrdinalIgnoreCase))
+                {
+                    headerChecked = true;
+                    continue; // skip header line
+                }
+                headerChecked = true;
+            }
+
+            var selected = GetCsvColumn(line, columnIndex);
+            if (string.IsNullOrWhiteSpace(selected)) continue;
+
+            // normalize: collapse multiple spaces, trim, lowercase
+            var t = selected.Trim();
+            while (t.Contains("  ", StringComparison.Ordinal)) t = t.Replace("  ", " ");
+            names.Add(t.ToLowerInvariant());
+        }
+
+        return names;
+    }
+
+    private static string FirstCsvColumnOrLine(string line)
+    {
+        if (line.StartsWith('"'))
+        {
+            var i = 1;
+            while (i < line.Length)
+            {
+                if (line[i] == '"' && i + 1 < line.Length && line[i + 1] == '"') { i += 2; continue; }
+                if (line[i] == '"') { i++; break; }
+                i++;
+            }
+            return line.Substring(1, Math.Max(0, i - 2)).Replace("\"\"", "\"");
+        }
+        var idx = line.IndexOf(',');
+        return idx >= 0 ? line[..idx] : line;
+    }
+
+    // ---- main comparison (NamePairs → WordPairs → Calculator) ----
+    private void CompareAllNamePairs()
+    {
+        Rows.Clear(); BestPerTarget.Clear(); _idByPair.Clear();
+
+        foreach (var targetName in TargetNames)
+        {
+            var targetWords = SplitWords(targetName);
+            for (int s = 0; s < SourceNames.Count; s++)
+            {
+                var sourceName = SourceNames[s];
+                var sourceWords = SplitWords(sourceName);
+
+                // Build cross-product of words into WordPair[]
+                var list = new List<WordPair>(targetWords.Length * sourceWords.Length);
+                for (int ti = 0; ti < targetWords.Length; ti++)
+                {
+                    for (int si = 0; si < sourceWords.Length; si++)
+                    {
+                        var wp = new WordPair
+                            {
+                                TargetWord = targetWords[ti],
+                                SourceWord = sourceWords[si],
+                                TargetID = ti,
+                                SourceID = si,
+                                excluded = false,
+                                scored = false
+                            };
+
+                        if (!IncludeTwoLetter && ((wp.TargetWord?.Length ?? 0) <= 2 || (wp.SourceWord?.Length ?? 0) <= 2))
+                            wp.excluded = true;
+
+                        list.Add(wp);
+                    }
+                }
+
+                // Run your pipeline
+                var arr = list.ToArray();
+                arr = calculator.CalcLevDistance(arr);
+                arr = calculator.CalcDistances(arr);
+                arr = calculator.CalcIndividualScore(arr);
+                arr = calculator.FindScored(arr, Math.Max(targetWords.Length, sourceWords.Length));
+
+                // Final score + S/D for this NamePair
+                var (finalPercent, S, D) = calculator.FindTotalScore(arr);
+
+                var np = new NamePair
+                    {
+                        TargetName = targetName,
+                        SourceName = sourceName,
+                        FinalScore = finalPercent,   // 0..100 from your Calculator
+                        SumOfWords = S,
+                        SumOfDistances = D,
+                        WordPairs = arr.ToList()    // keep all word-pairs for details
+                    };
+                var id = Transit.Put(np);
+                GetOrPutId(np);
+
+                Rows.Add(np);
+            }
+
+        }
+
+        // Optional “best per target” (highest FinalScore)
+        if (ShowBestPerTarget)
+        {
+            BestPerTarget = Rows
+              .GroupBy(r => r.TargetName, StringComparer.OrdinalIgnoreCase)
+              .Select(g => g.OrderByDescending(x => x.FinalScore).First())
+              .ToList();
+        }
+
+        CsvDataUrl = string.Empty; ShowExportLink = false;
+    }
+
+    private static string[] SplitWords(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return Array.Empty<string>();
+        // split on common separators; keep only non-empty tokens
+        var parts = name.Split(new[] { ' ', '/', ',', '-', '.', '+', '?', '&', '\'', '"', '!', '*', '_' },
+                               StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts;
+    }
+
+    // ---- export ----
+    private string CsvDataUrl { get; set; } = string.Empty;
+    private bool ShowExportLink { get; set; } = false;
+    private string DownloadFileName => "NamePairs.csv";
+
+    private void OpenInExcel()
+    {
+        if (!HasRows) return;
+        var csv = BuildCsv(SortedRows);
+        var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(csv);
+        Nav.NavigateTo(dataUrl, forceLoad: true);
+    }
+
+    private void PrepareExport()
+    {
+        if (!HasRows) return;
+        var csv = BuildCsv(SortedRows);
+        CsvDataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(csv);
+        ShowExportLink = true;
+    }
+
+    private static string BuildCsv(IEnumerable<NamePair> rows)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("Target,Source,Final Score %");
+        foreach (var r in rows)
+            sb.AppendLine(string.Join(',', Csv(r.TargetName), Csv(r.SourceName), r.FinalScore.ToString("0.###")));
+        return sb.ToString();
+    }
+
+    private static string Csv(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        if (s.Contains('"') || s.Contains(',') || s.Contains('\n'))
+            return '"' + s.Replace("\"", "\"\"") + '"';
+        return s;
+    }
+
+    private static bool IsAllDigits(string? s)
+    => !string.IsNullOrEmpty(s) && s.All(char.IsDigit);
+
+    /// <summary>Return the zero-based CSV column; handles quotes and escaped quotes.</summary>
+    private static string GetCsvColumn(string line, int index)
+    {
+        if (index < 0) return string.Empty;
+
+        var sb = new StringBuilder();
+        int col = 0;
+        bool inQuotes = false;
+
+        for (int i = 0; i < line.Length; i++)
+        {
+            char ch = line[i];
+
+            if (inQuotes)
+            {
+                if (ch == '"')
+                {
+                    // Escaped quote?
+                    if (i + 1 < line.Length && line[i + 1] == '"')
+                    {
+                        sb.Append('"');
+                        i++; // skip the second quote
+                    }
+                    else
+                    {
+                        inQuotes = false; // closing quote
+                    }
+                }
+                else
+                {
+                    sb.Append(ch);
+                }
+            }
+            else
+            {
+                if (ch == '"')
+                {
+                    inQuotes = true;
+                }
+                else if (ch == ',')
+                {
+                    if (col == index) return sb.ToString();
+                    col++;
+                    sb.Clear();
+                }
+                else
+                {
+                    sb.Append(ch);
+                }
+            }
+        }
+
+        // end of line: return last column if it matches index
+        return (col == index) ? sb.ToString() : string.Empty;
+    }
+    private string GetOrPutId(NamePair p)
+    {
+        if (_idByPair.TryGetValue(p, out var existing)) return existing;
+        var id = Transit.Put(p);
+        _idByPair[p] = id;
+        return id;
+    }
+}

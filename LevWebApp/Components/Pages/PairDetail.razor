@@ -1,0 +1,142 @@
+﻿@rendermode InteractiveServer
+@page "/pair-detail/{id}"
+@using LevWebApp
+@using LevWebApp.Models
+@using LevWebApp.Services
+@inject PairTransitStore Transit
+
+<PageTitle>Pair Details</PageTitle>
+
+@if (Pair is null)
+{
+    <div class="card">
+        <h3>Not found or expired</h3>
+        <p>This comparison is no longer available. Run it again from the list page.</p>
+    </div>
+}
+else
+{
+    <div class="card">
+        <div class="card__hdr">
+            <div>
+                <div class="muted">Name Pair</div>
+                <h3>@Pair.TargetName ↔ @Pair.SourceName</h3>
+            </div>
+            <a class="btn-mini" href="/list-compare">Back</a>
+        </div>
+
+        <div class="kpi">
+            <div><b>Final Score %:</b> @Pair.FinalScore.ToString("0.###")</div>
+            <div><b>S (Sum of Word Lengths):</b> @Pair.SumOfWords</div>
+            <div><b>D (Sum of Distances):</b> @Pair.SumOfDistances</div>
+            <div><b>Formula:</b> ((S - D) * 100) / S</div>
+            <div><b>Final Calculation:</b> ((@Pair.SumOfWords - @Pair.SumOfDistances)*100) / @Pair.SumOfWords</div>
+        </div>
+
+        <h4>Word Pairs</h4>
+        <div class="tableWrap">
+            <table class="data">
+                <thead>
+                    <tr>
+                        <th class="sortable" @onclick="() => ToggleSort(ColTarget)">
+                            Target @SortGlyph(ColTarget)
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(ColSource)">
+                            Source @SortGlyph(ColSource)
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(ColLev)">
+                            Lev Dist @SortGlyph(ColLev)
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(ColSrcDist)">
+                            Source Dist @SortGlyph(ColSrcDist)
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(ColTgtDist)">
+                            Target Dist @SortGlyph(ColTgtDist)
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(ColTotDist)">
+                            Total Dist @SortGlyph(ColTotDist)
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(ColPct)">
+                            Individual % @SortGlyph(ColPct)
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(ColScored)">
+                            Scored @SortGlyph(ColScored)
+                        </th>
+                        <th class="sortable" @onclick="() => ToggleSort(ColExcluded)">
+                            Excluded @SortGlyph(ColExcluded)
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var w in SortedWordPairs)
+                    {
+                        <tr>
+                            <td>@w.TargetWord</td>
+                            <td>@w.SourceWord</td>
+                            <td>@w.levdistance</td>
+                            <td>@w.sourcedistance</td>
+                            <td>@w.targetdistance</td>
+                            <td>@w.totaldistance</td>
+                            <td>@((w.InitialScore * 100m).ToString("0.###"))</td>
+                            <td>@w.scored</td>
+                            <td>@w.excluded</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string? id { get; set; }
+    private NamePair? Pair;
+
+    // ---- column keys (avoid nested quotes in Razor) ----
+    private const string ColTarget = "Target";
+    private const string ColSource = "Source";
+    private const string ColLev = "Lev";
+    private const string ColSrcDist = "SrcDist";
+    private const string ColTgtDist = "TgtDist";
+    private const string ColTotDist = "TotDist";
+    private const string ColPct = "Pct";
+    private const string ColScored = "Scored";
+    private const string ColExcluded = "Excluded";
+
+    // ---- sort state ----
+    private string sortCol = ColPct;   // default: individual % descending
+    private bool sortAsc = false;
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrWhiteSpace(id) && Transit.TryGet(id, out var p))
+            Pair = p;
+        else
+            Pair = null;
+    }
+
+    private IEnumerable<WordPair> SortedWordPairs =>
+      ApplySort(Pair?.WordPairs ?? Enumerable.Empty<WordPair>(), sortCol, sortAsc);
+
+    private void ToggleSort(string col)
+    {
+        if (sortCol == col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = true; }
+    }
+
+    private static IEnumerable<WordPair> ApplySort(IEnumerable<WordPair> rows, string col, bool asc) => col switch
+    {
+        ColTarget => asc ? rows.OrderBy(r => r.TargetWord) : rows.OrderByDescending(r => r.TargetWord),
+        ColSource => asc ? rows.OrderBy(r => r.SourceWord) : rows.OrderByDescending(r => r.SourceWord),
+        ColLev => asc ? rows.OrderBy(r => r.levdistance) : rows.OrderByDescending(r => r.levdistance),
+        ColSrcDist => asc ? rows.OrderBy(r => r.sourcedistance) : rows.OrderByDescending(r => r.sourcedistance),
+        ColTgtDist => asc ? rows.OrderBy(r => r.targetdistance) : rows.OrderByDescending(r => r.targetdistance),
+        ColTotDist => asc ? rows.OrderBy(r => r.totaldistance) : rows.OrderByDescending(r => r.totaldistance),
+        ColPct => asc ? rows.OrderBy(r => r.InitialScore) : rows.OrderByDescending(r => r.InitialScore),
+        ColScored => asc ? rows.OrderBy(r => r.scored) : rows.OrderByDescending(r => r.scored),
+        ColExcluded => asc ? rows.OrderBy(r => r.excluded) : rows.OrderByDescending(r => r.excluded),
+        _ => rows
+    };
+
+    private MarkupString SortGlyph(string col)
+      => (MarkupString)((col == sortCol) ? (sortAsc ? " &#9650;" : " &#9660;") : "");
+}

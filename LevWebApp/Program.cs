@@ -1,4 +1,5 @@
 using LevWebApp.Components;
+using LevWebApp.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -6,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+builder.Services.AddSingleton<PairTransitStore>();
 
 var app = builder.Build();
 
