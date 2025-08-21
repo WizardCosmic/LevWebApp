@@ -57,10 +57,11 @@
             <button type="button" @onclick="ProcessPair">Calculate</button>
             <button type="button" @onclick="OpenInExcel" disabled="@(!HasRows)">Open to Excel</button>
             <button type="button" @onclick="PrepareExport" disabled="@(!HasRows)">Export to CSV</button>
-            <a href="@CsvDataUrl" download="@DownloadFileName"
-               style="display:@(ShowExportLink ? "inline-block" : "none"); margin-left:.5rem">
-                Click to download
-            </a>
+                <a href="@CsvDataUrl"
+                   download="@DownloadFileName"
+                   class="ml-2 @(ShowExportLink ? "" : "is-hidden")">
+                    Click to download
+                </a>
         </div>
 
         <div class="summary">

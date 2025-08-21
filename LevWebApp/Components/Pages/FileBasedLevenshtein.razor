@@ -40,6 +40,23 @@
                 Also show “best per target”
             </label>
         </div>
+        <!-- Word separators -->
+        <div class="field">
+            <label>Word separators</label>
+            <input @bind="SeparatorsRaw" />
+            <small>
+                Leave blank for default:
+                <code>space / , - . + ? & ' " ! * _</code>
+            </small>
+        </div>
+
+        <!-- Excluded words -->
+        <div class="field">
+            <label>Excluded words</label>
+            <textarea rows="2" @bind="ExcludedWordsRaw"
+                      placeholder="Comma or newline separated, e.g. inc,llc,and,the"></textarea>
+            <small>Case-insensitive. Any pair containing an excluded word is marked <b>Excluded</b>.</small>
+        </div>
         <div class="field">
             <label>Minimum Score (%)</label>
             <input type="number" min="0" max="100" step="0.001" @bind="MinimumScore" />
@@ -125,7 +142,7 @@
                                 <td>@r.FinalScore.ToString("0.###")</td>
                                 
                                 <td>
-                                    <a href="@($"/pair-detail/{GetOrPutId(r)}")" target="_blank" rel="noopener" class="btn-mini">View</a>
+                                    <button class="btn-mini" @onclick="() => OpenDetailsAsync(r)">View</button>
                                 </td>
                                 
                             </tr>
@@ -150,7 +167,7 @@
                                 <td>@r.TargetName</td>
                                 <td>@r.SourceName</td>
                                 <td>@r.FinalScore.ToString("0.###")</td>
-                                <a href="@($"/pair-detail/{GetOrPutId(r)}")" target="_blank" rel="noopener" class="btn-mini">View</a>
+                                <td><button class="btn-mini" @onclick="() => OpenDetailsAsync(r)">View</button></td>
                             </tr>
                         }
                     </tbody>
@@ -316,8 +333,10 @@
     // ---- main comparison (NamePairs → WordPairs → Calculator) ----
     private async Task CompareAllNamePairsAsync()
     {
+
         // reset state
         IsBusy = true; TimedOut = false; Cancelled = false; CancelRequested = false;
+        RebuildExcluded();
         Rows.Clear(); BestPerTarget.Clear(); _idByPair.Clear();
         TotalPairs = TargetNames.Count * SourceNames.Count;
         ProcessedPairs = 0;
@@ -326,6 +345,7 @@
         await InvokeAsync(StateHasChanged); // let the busy bar render
 
         // main loops
+
         for (int ti = 0; ti < TargetNames.Count; ti++)
         {
             var targetName = TargetNames[ti];
@@ -355,8 +375,12 @@
                                 excluded = false,
                                 scored = false
                             };
-                        if (!IncludeTwoLetter && ((wp.TargetWord?.Length ?? 0) <= 2 || (wp.SourceWord?.Length ?? 0) <= 2))
-                            wp.excluded = true;
+                        bool tooShort = !IncludeTwoLetter &&
+                                        ((wp.TargetWord?.Length ?? 0) <= 2 || (wp.SourceWord?.Length ?? 0) <= 2);
+
+                        bool inExcluded = IsExcludedWord(wp.TargetWord) || IsExcludedWord(wp.SourceWord);
+
+                        wp.excluded = tooShort || inExcluded;
 
                         list.Add(wp);
                     }
@@ -378,19 +402,26 @@
                         FinalScore = finalPercent,
                         SumOfWords = S,
                         SumOfDistances = D,
-                        WordPairs = arr.ToList()
+                        WordPairs = null
                     };
-
-                GetOrPutId(np);
-                Rows.Add(np);
-
-                // progress & UI yield
                 ProcessedPairs++;
                 if (ProcessedPairs % YieldEvery == 0)
                 {
                     await InvokeAsync(StateHasChanged);
                     await Task.Delay(1); // brief yield so UI can breathe
                 }
+                if (finalPercent < MinimumScore)
+                {
+                    // drop result to save memory
+                    continue;
+                }
+
+
+                GetOrPutId(np);
+                Rows.Add(np);
+
+                
+
             }
         }
 
@@ -404,17 +435,23 @@
                 .Select(g => g.OrderByDescending(x => x.FinalScore).First())
                 .ToList();
         }
-
+        
         IsBusy = false;
         await InvokeAsync(StateHasChanged);
     }
 
-    private static string[] SplitWords(string? name)
+    private string[] SplitWords(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return Array.Empty<string>();
-        // split on common separators; keep only non-empty tokens
-        var parts = name.Split(new[] { ' ', '/', ',', '-', '.', '+', '?', '&', '\'', '"', '!', '*', '_' },
-                               StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var parts = name.Split(
+            ActiveSplitChars,                       // instance property
+            StringSplitOptions.RemoveEmptyEntries |
+            StringSplitOptions.TrimEntries);
+
+        for (int i = 0; i < parts.Length; i++)
+            parts[i] = parts[i].ToLowerInvariant();
+
         return parts;
     }
 
@@ -521,6 +558,76 @@
         _idByPair[p] = id;
         return id;
     }
+    [Inject] IJSRuntime JS { get; set; } = default!;
+    private async Task OpenDetailsAsync(NamePair np)
+    {
+        // recompute ONLY this pair’s word-pairs
+        var targetWords = SplitWords(np.TargetName);
+        var sourceWords = SplitWords(np.SourceName);
+
+        var list = new List<WordPair>(targetWords.Length * sourceWords.Length);
+        for (int ti = 0; ti < targetWords.Length; ti++)
+            for (int si = 0; si < sourceWords.Length; si++)
+            {
+                var wp = new WordPair
+                    {
+                        TargetWord = targetWords[ti],
+                        SourceWord = sourceWords[si],
+                        TargetID = ti,
+                        SourceID = si
+                    };
+                if (!IncludeTwoLetter && ((wp.TargetWord?.Length ?? 0) <= 2 || (wp.SourceWord?.Length ?? 0) <= 2))
+                    wp.excluded = true;
+                list.Add(wp);
+            }
+
+        var arr = list.ToArray();
+        arr = calculator.CalcLevDistance(arr);
+        arr = calculator.CalcDistances(arr);
+        arr = calculator.CalcIndividualScore(arr);
+        arr = calculator.FindScored(arr, Math.Max(targetWords.Length, sourceWords.Length));
+
+        np.WordPairs = arr.ToList();     // attach only for this one
+        var id = Transit.Put(np, TimeSpan.FromMinutes(20));
+
+        // open new tab
+        var url = $"/pair-detail/{id}";
+        await JS.InvokeVoidAsync("open", url, "_blank");
+    }
+    // ----- separators & excluded words -----
+    private string SeparatorsRaw { get; set; } = ""; // empty => use defaults
+    private string ExcludedWordsRaw { get; set; } = "";
+    private HashSet<string> ExcludedWords { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    // default separators if user leaves the field blank
+    private static readonly char[] DefaultSplitChars =
+        new[] { ' ', '/', ',', '-', '.', '+', '?', '&', '\'', '"', '!', '*', '_' };
+
+    // produce the active split chars each time (trim spaces; dedupe)
+    private char[] ActiveSplitChars =>
+        string.IsNullOrWhiteSpace(SeparatorsRaw)
+          ? DefaultSplitChars
+          : SeparatorsRaw.ToCharArray().Distinct().ToArray();
+
+    // parse excluded words (comma/newline/semicolon/tab separated)
+    private void RebuildExcluded()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(ExcludedWordsRaw))
+        {
+            foreach (var token in ExcludedWordsRaw
+                       .Replace("\r\n", "\n")
+                       .Split(new[] { ',', '\n', ';', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var t = token.Trim();
+                if (t.Length > 0) set.Add(t);
+            }
+        }
+        ExcludedWords = set;
+    }
+
+    // helper used when building word-pairs
+    private bool IsExcludedWord(string? w) => !string.IsNullOrEmpty(w) && ExcludedWords.Contains(w!);
 
 
 }
